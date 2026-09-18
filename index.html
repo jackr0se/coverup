@@ -1,0 +1,787 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>COVERCAM // face overlay processor</title>
+<style>
+  :root{
+    --bg:#0a0d0a;
+    --panel:#12160f;
+    --panel-alt:#171d13;
+    --line:#2a3324;
+    --line-strong:#4a7a3a;
+    --accent:#8fff6b;
+    --text:#c9e8bd;
+    --text-dim:#5f7a55;
+    --danger:#ff5b5b;
+  }
+  *{ box-sizing:border-box; }
+  html,body{
+    margin:0; padding:0; background:#000; color:var(--text);
+    font-family:'Courier New', ui-monospace, monospace;
+    height:100%; overflow:hidden; overscroll-behavior:none;
+  }
+  body{ position:relative; width:100%; height:100dvh; }
+
+  .header-row, .subhead, .foot{ display:none; }
+
+  .layout{ display:block; width:100%; height:100%; }
+
+  .monitor-wrap{ position:fixed; inset:0; z-index:1; background:#000; }
+  .monitor{ position:relative; width:100%; height:100%; }
+  .screen{ position:relative; width:100%; height:100%; overflow:hidden; background:#000; }
+
+  video{ display:none; }
+  canvas#canvas{ position:absolute; inset:0; width:100%; height:100%; display:block; }
+
+  .statusbar{
+    position:absolute; top:0; left:0; right:0; z-index:2;
+    display:flex; justify-content:space-between; align-items:center;
+    padding:14px 14px; font-size:10px; letter-spacing:0.5px;
+    color:var(--accent); text-shadow:0 0 4px rgba(143,255,107,0.4);
+    background:linear-gradient(to bottom, rgba(0,0,0,0.55), transparent);
+    pointer-events:none;
+  }
+  .statusbar .rec{ display:flex; align-items:center; gap:6px; opacity:0.55; }
+  .statusbar .rec .dot{ width:7px; height:7px; border-radius:50%; background:var(--accent); }
+  .statusbar.is-recording .rec .dot{
+    background:var(--danger); box-shadow:0 0 6px var(--danger);
+    animation:blink 1s steps(2) infinite;
+  }
+  .statusbar.is-recording .rec{ color:var(--danger); opacity:1; }
+  @keyframes blink{ 50%{ opacity:0.25; } }
+  @media (prefers-reduced-motion: reduce){
+    .statusbar.is-recording .rec .dot{ animation:none; }
+  }
+
+  .placeholder{
+    position:absolute; inset:0; z-index:3; display:flex; align-items:center; justify-content:center;
+    flex-direction:column; gap:14px; text-align:center; padding:30px;
+    background:rgba(0,0,0,0.85);
+  }
+  .placeholder p{ font-size:11px; color:var(--text-dim); max-width:300px; line-height:1.6; margin:0; }
+  .placeholder button{
+    font-family:inherit; font-weight:700; font-size:11px; letter-spacing:0.5px;
+    background:var(--accent); border:1px solid var(--accent); color:#06110a;
+    padding:11px 20px; border-radius:4px; cursor:pointer; text-transform:uppercase;
+  }
+  .placeholder button:hover{ opacity:0.85; }
+  .placeholder button:disabled{ opacity:0.5; cursor:not-allowed; }
+  .placeholder .err{ color:var(--danger); font-size:10px; max-width:300px; }
+
+  .console{
+    position:fixed; inset:0; z-index:10; pointer-events:none;
+  }
+
+  select{
+    font-family:inherit; font-weight:700; font-size:11px; letter-spacing:0.5px;
+    background:rgba(18,22,15,0.9); backdrop-filter:blur(6px);
+    border:1px solid var(--line-strong); color:var(--text);
+    padding:9px 26px 9px 12px; border-radius:20px; cursor:pointer;
+    text-transform:uppercase;
+    appearance:none; -webkit-appearance:none;
+    background-image:linear-gradient(45deg, transparent 50%, var(--accent) 50%),
+                      linear-gradient(135deg, var(--accent) 50%, transparent 50%);
+    background-position:calc(100% - 14px) center, calc(100% - 9px) center;
+    background-size:5px 5px, 5px 5px;
+    background-repeat:no-repeat;
+  }
+  select:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+
+  .select-row{ display:none; }
+
+  .fab-stack{
+    position:absolute; left:16px; bottom:30px; z-index:21;
+    display:flex; flex-direction:column; gap:12px;
+    pointer-events:auto;
+  }
+  .fab-btn{
+    width:44px; height:44px; border-radius:50%;
+    background:rgba(18,22,15,0.9); backdrop-filter:blur(6px);
+    border:1px solid var(--line-strong); color:var(--text);
+    display:flex; align-items:center; justify-content:center; cursor:pointer;
+  }
+  .fab-btn.active{ border-color:var(--accent); color:var(--accent); background:rgba(143,255,107,0.15); }
+  .fab-btn:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+
+  .float-panel{
+    display:none; position:absolute; left:16px; bottom:140px; z-index:22;
+    min-width:150px;
+    background:rgba(18,22,15,0.95); backdrop-filter:blur(8px);
+    border:1px solid var(--line-strong); border-radius:10px;
+    overflow:hidden; pointer-events:auto;
+  }
+  .float-panel.open{ display:block; }
+  .float-panel button{
+    display:block; width:100%; text-align:left;
+    font-family:inherit; font-weight:700; font-size:11px; letter-spacing:0.5px;
+    background:transparent; border:none; border-bottom:1px solid var(--line); color:var(--text-dim);
+    padding:11px 14px; cursor:pointer; text-transform:uppercase;
+  }
+  .float-panel button:last-child{ border-bottom:none; }
+  .float-panel button:hover{ background:rgba(143,255,107,0.08); color:var(--text); }
+  .float-panel button.active{ color:var(--accent); }
+
+  .actions{
+    position:absolute; left:0; right:0; bottom:24px; z-index:20;
+    display:flex; justify-content:center; align-items:center; gap:22px;
+    pointer-events:none;
+  }
+  .actions button{
+    pointer-events:auto;
+    width:56px; height:56px; border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    background:rgba(18,22,15,0.9); backdrop-filter:blur(6px);
+    border:1px solid var(--line-strong); color:var(--text); cursor:pointer;
+  }
+  .actions button:disabled{ opacity:0.4; cursor:not-allowed; }
+  .actions button:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+  .actions .btn-label{ display:none; }
+  #captureBtn{ width:70px; height:70px; }
+  #captureBtn .icon{ width:26px; height:26px; }
+  #recBtn.recording{ border-color:var(--danger); color:var(--danger); background:rgba(217,83,79,0.18); }
+
+  .icon{ width:20px; height:20px; stroke:currentColor; stroke-width:2.25; fill:none; stroke-linecap:round; stroke-linejoin:round; display:block; }
+  .icon-rec-stop{ display:none; }
+  #recBtn.recording .icon-rec-dot{ display:none; }
+  #recBtn.recording .icon-rec-stop{ display:block; }
+
+  a.download-link{ display:none; }
+
+  @media (min-width:768px){
+    html,body{ overflow-y:auto; overflow-x:hidden; height:100%; }
+    body{
+      display:flex; flex-direction:column; align-items:center; justify-content:center;
+      height:100vh; padding:14px;
+      background:var(--bg);
+      background-image:radial-gradient(circle at 50% 0%, rgba(143,255,107,0.06), transparent 60%);
+    }
+    .header-row, .subhead, .foot{ display:block; flex:0 0 auto; }
+    .header-row{ display:flex; align-items:baseline; gap:12px; }
+    .brand{ font-weight:700; font-size:19px; letter-spacing:1px; color:var(--text); }
+    .brand span{ color:var(--accent); }
+    .subhead{ font-size:10px; color:var(--text-dim); letter-spacing:1.5px; margin-bottom:10px; text-transform:uppercase; }
+    .foot{ margin-top:8px; font-size:9px; color:var(--text-dim); text-align:center; }
+
+    .layout{
+      display:flex; flex-direction:row; align-items:stretch; width:100%; max-width:980px; gap:14px;
+      flex:1 1 auto; min-height:0;
+    }
+    .monitor-wrap{
+      position:static; flex:1 1 auto; min-width:0; min-height:0; background:transparent; z-index:auto;
+      display:flex; align-items:stretch;
+    }
+    .monitor{
+      width:100%; height:100%; min-height:0; min-width:0;
+      background:#000; border:3px solid var(--line-strong); border-radius:14px; overflow:hidden;
+    }
+    .screen{ width:100%; height:100%; }
+
+    .console{
+      position:static; pointer-events:auto; z-index:auto;
+      background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px;
+      flex:0 0 260px; display:flex; flex-direction:column; gap:10px;
+    }
+    .section-label{
+      font-size:10px; letter-spacing:1.5px; color:var(--text-dim); text-transform:uppercase; margin:0;
+    }
+    .select-row{ display:flex; position:static; transform:none; flex-direction:column; gap:8px; }
+    .select-row select{ width:100%; border-radius:6px; }
+    .fab-stack{ display:none; }
+    .float-panel{ display:none !important; }
+
+    .actions{ position:static; display:flex; gap:10px; margin-top:4px; }
+    .actions button{
+      pointer-events:auto; flex:1; width:auto; height:auto; border-radius:6px;
+      font-weight:700; font-size:11px; letter-spacing:0.5px; padding:12px;
+      background:var(--panel-alt); border:1px solid var(--line-strong); backdrop-filter:none;
+    }
+    .actions button:hover{ border-color:var(--accent); }
+    .actions .btn-label{ display:inline; margin-left:6px; }
+    #captureBtn{ width:auto; height:auto; }
+    #captureBtn .icon{ width:18px; height:18px; }
+  }
+</style>
+</head>
+<body>
+
+  <div class="header-row">
+    <div class="brand">COVER<span>CAM</span></div>
+  </div>
+  <div class="subhead">face-tracked character overlay</div>
+
+  <div class="layout">
+    <div class="monitor-wrap">
+      <div class="monitor">
+        <div class="screen">
+          <div class="statusbar" id="statusbar">
+            <span id="hudLeft">CAM_01 · STANDBY</span>
+            <div class="rec"><div class="dot"></div><span id="hudRight">GOKU · MOUTH</span></div>
+          </div>
+          <video id="video" autoplay playsinline muted></video>
+          <canvas id="canvas"></canvas>
+          <div class="placeholder" id="idleOverlay">
+            <p id="idleMsg">Live camera, selectable face region, character overlay.<br>Runs fully local in your browser.</p>
+            <div class="err" id="errMsg" style="display:none;"></div>
+            <button id="startBtn">Enable Camera</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="console">
+      <div class="select-row">
+        <label class="section-label" for="charSelect" style="display:none;">Character</label>
+        <select id="charSelect" aria-label="Character">
+          <option value="goku">GOKU</option>
+          <option value="hulk">HULK</option>
+          <option value="squidward">SQUIDWARD</option>
+        </select>
+        <label class="section-label" for="regionSelect" style="display:none;">Region</label>
+        <select id="regionSelect" aria-label="Face region">
+          <option value="mouth">MOUTH</option>
+          <option value="eyes">EYES</option>
+        </select>
+      </div>
+
+      <div class="fab-stack">
+        <button class="fab-btn" id="fabChar" title="Character" aria-label="Select character" type="button">
+          <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M9 10h.01M15 10h.01M9 15c1 1 2 1.5 3 1.5s2-.5 3-1.5"/></svg>
+        </button>
+        <button class="fab-btn" id="fabRegion" title="Region" aria-label="Select face region" type="button">
+          <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/></svg>
+        </button>
+      </div>
+
+      <div class="float-panel" id="charPanel" style="bottom:86px; left:68px;">
+        <button data-char="goku" class="active" type="button">Goku</button>
+        <button data-char="hulk" type="button">Hulk</button>
+        <button data-char="squidward" type="button">Squidward</button>
+      </div>
+      <div class="float-panel" id="regionPanel" style="bottom:30px; left:68px;">
+        <button data-region="mouth" class="active" type="button">Mouth</button>
+        <button data-region="eyes" type="button">Eyes</button>
+      </div>
+
+      <div class="actions" id="actionsBar">
+        <button id="captureBtn" disabled title="Capture PNG" aria-label="Capture PNG">
+          <svg class="icon" viewBox="0 0 24 24"><path d="M4 8h3l1.5-2h7L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13" r="3.5"/></svg>
+          <span class="btn-label">Capture PNG</span>
+        </button>
+        <button id="recBtn" disabled title="Record WebM" aria-label="Record WebM">
+          <svg class="icon icon-rec-dot" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7" fill="currentColor" stroke="none"/></svg>
+          <svg class="icon icon-rec-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1" fill="currentColor" stroke="none"/></svg>
+          <span class="btn-label">Record WebM</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="foot">Runs fully local — nothing leaves your browser.</div>
+<a id="downloadLink" class="download-link"></a>
+
+<script type="module">
+import { FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+
+/* ------------------------------------------------------------------
+   Character assets — external files served from ./assets/
+   Rename to match whatever you push to GitHub Pages.
+-------------------------------------------------------------------*/
+const ASSET_BASE = "assets/";
+const CHARACTERS = {
+  goku:      { mouth: ASSET_BASE + "goku_mouth.png",      eyes: ASSET_BASE + "goku_eyes.png" },
+  hulk:      { mouth: ASSET_BASE + "hulk_mouth.png",      eyes: ASSET_BASE + "hulk_eyes.png" },
+  squidward: { mouth: ASSET_BASE + "squidward_mouth.png", eyes: ASSET_BASE + "squidward_eyes.png" },
+};
+
+/* FaceLandmarker landmark indices (standard 468-point mesh) */
+const LANDMARKS = {
+  mouth: {
+    // Approximate mouth bounding quad (outer lip corners + inner top/bottom)
+    left: 61, right: 291, top: 13, bottom: 14,
+    padX: 0.5, padY: 1.0,
+  },
+  eyes: {
+    // Approximate eye band (outer left, outer right, brow top, lower lid)
+    left: 33, right: 263, top: 10, bottom: 152,
+    padX: 0.15, padY: 0.35,
+  },
+};
+
+/* ------------------------------------------------------------------
+   DOM
+-------------------------------------------------------------------*/
+const video       = document.getElementById("video");
+const canvas      = document.getElementById("canvas");
+const ctx         = canvas.getContext("2d", { alpha: false });
+const idleOverlay = document.getElementById("idleOverlay");
+const idleMsg     = document.getElementById("idleMsg");
+const errMsg      = document.getElementById("errMsg");
+const startBtn    = document.getElementById("startBtn");
+const captureBtn  = document.getElementById("captureBtn");
+const recBtn      = document.getElementById("recBtn");
+const charSelect  = document.getElementById("charSelect");
+const regionSel   = document.getElementById("regionSelect");
+const statusbar   = document.getElementById("statusbar");
+const hudLeft     = document.getElementById("hudLeft");
+const hudRight    = document.getElementById("hudRight");
+const downloadLink= document.getElementById("downloadLink");
+const fabChar     = document.getElementById("fabChar");
+const fabRegion   = document.getElementById("fabRegion");
+const charPanel   = document.getElementById("charPanel");
+const regionPanel = document.getElementById("regionPanel");
+
+/* ------------------------------------------------------------------
+   State
+-------------------------------------------------------------------*/
+const state = {
+  character: "goku",
+  region: "mouth",
+  running: false,
+  recording: false,
+  recorder: null,
+  recChunks: [],
+  recStart: 0,
+  recTimer: 0,
+  stream: null,
+  faceLandmarker: null,
+  lastLandmarks: null,
+  lastDetectTs: 0,
+  detectIntervalMs: 50,      // 20 fps detection
+  bitmaps: new Map(),        // key: "goku:mouth" → ImageBitmap
+  renderRunning: false,
+};
+
+/* ------------------------------------------------------------------
+   Error surface
+-------------------------------------------------------------------*/
+function showError(msg) {
+  errMsg.textContent = msg;
+  errMsg.style.display = "block";
+  idleMsg.style.display = "none";
+  idleOverlay.style.display = "flex";
+  startBtn.disabled = false;
+  startBtn.textContent = "Retry";
+}
+function clearError() {
+  errMsg.style.display = "none";
+  errMsg.textContent = "";
+  idleMsg.style.display = "";
+}
+
+/* ------------------------------------------------------------------
+   ImageBitmap loader
+-------------------------------------------------------------------*/
+async function loadBitmap(key, url) {
+  if (state.bitmaps.has(key)) return state.bitmaps.get(key);
+  const res = await fetch(url, { cache: "force-cache" });
+  if (!res.ok) throw new Error(`Asset missing: ${url}`);
+  const blob = await res.blob();
+  const bmp = await createImageBitmap(blob);
+  state.bitmaps.set(key, bmp);
+  return bmp;
+}
+
+/* Preload the current selection + all characters in background */
+async function preloadCurrent() {
+  const c = CHARACTERS[state.character];
+  const url = c[state.region];
+  try {
+    await loadBitmap(`${state.character}:${state.region}`, url);
+  } catch (e) {
+    console.warn(e);
+  }
+}
+function preloadAll() {
+  for (const [name, sets] of Object.entries(CHARACTERS)) {
+    for (const [region, url] of Object.entries(sets)) {
+      loadBitmap(`${name}:${region}`, url).catch(()=>{});
+    }
+  }
+}
+
+/* ------------------------------------------------------------------
+   Model bootstrap
+-------------------------------------------------------------------*/
+async function initModel() {
+  if (state.faceLandmarker) return state.faceLandmarker;
+  const fileset = await FilesetResolver.forVisionTasks(
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+  );
+  state.faceLandmarker = await FaceLandmarker.createFromOptions(fileset, {
+    baseOptions: {
+      modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+      delegate: "GPU",
+    },
+    runningMode: "VIDEO",
+    numFaces: 1,
+    outputFaceBlendshapes: false,
+    outputFacialTransformationMatrixes: false,
+  });
+  return state.faceLandmarker;
+}
+
+/* ------------------------------------------------------------------
+   Camera bootstrap
+-------------------------------------------------------------------*/
+async function initCamera() {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    throw new Error("Camera API unavailable. Use https:// or localhost.");
+  }
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: {
+      facingMode: "user",
+      width:  { ideal: 1280 },
+      height: { ideal: 720 },
+      frameRate: { ideal: 30, max: 60 },
+    },
+    audio: false,
+  });
+  state.stream = stream;
+  video.srcObject = stream;
+  await video.play();
+
+  // Wait for real dimensions
+  if (!video.videoWidth) {
+    await new Promise(r => video.addEventListener("loadedmetadata", r, { once: true }));
+  }
+
+  // Size canvas to video's intrinsic dimensions
+  canvas.width  = video.videoWidth  || 1280;
+  canvas.height = video.videoHeight || 720;
+}
+
+/* ------------------------------------------------------------------
+   Crop transform for object-fit: cover
+   Maps normalized landmark coords (0..1 within video) →
+   pixel coords within the displayed canvas region.
+-------------------------------------------------------------------*/
+function computeCoverTransform() {
+  const vw = video.videoWidth, vh = video.videoHeight;
+  const cw = canvas.clientWidth, ch = canvas.clientHeight;
+  const cwpx = canvas.width, chpx = canvas.height;
+
+  // Aspect of displayed region in CSS px
+  const dispAspect = cw / ch;
+  const vidAspect  = vw / vh;
+
+  let sx = 0, sy = 0, sw = vw, sh = vh;
+  if (vidAspect > dispAspect) {
+    // video wider than display → crop left/right
+    sw = vh * dispAspect;
+    sx = (vw - sw) / 2;
+  } else {
+    // video taller than display → crop top/bottom
+    sh = vw / dispAspect;
+    sy = (vh - sh) / 2;
+  }
+  // scale: canvas backing store is same aspect as display
+  const scale = cwpx / sw;
+  return { sx, sy, sw, sh, scale };
+}
+
+function landmarkToCanvas(nx, ny) {
+  const { sx, sy, sw, scale } = computeCoverTransform();
+  const px = (nx * video.videoWidth  - sx) * scale;
+  const py = (ny * video.videoHeight - sy) * scale;
+  return { x: px, y: py };
+}
+
+/* ------------------------------------------------------------------
+   Overlay math
+-------------------------------------------------------------------*/
+function getOverlayBox(landmarks) {
+  const spec = LANDMARKS[state.region];
+  const pts = {
+    left:   landmarks[spec.left],
+    right:  landmarks[spec.right],
+    top:    landmarks[spec.top],
+    bottom: landmarks[spec.bottom],
+  };
+  if (!pts.left || !pts.right || !pts.top || !pts.bottom) return null;
+
+  const L = landmarkToCanvas(pts.left.x,   pts.left.y);
+  const R = landmarkToCanvas(pts.right.x,  pts.right.y);
+  const T = landmarkToCanvas(pts.top.x,    pts.top.y);
+  const B = landmarkToCanvas(pts.bottom.x, pts.bottom.y);
+
+  let x0 = Math.min(L.x, R.x);
+  let x1 = Math.max(L.x, R.x);
+  let y0 = Math.min(T.y, B.y);
+  let y1 = Math.max(T.y, B.y);
+
+  // Region-specific sanity: eyes band should be taller than mouth band
+  if (state.region === "eyes" && (y1 - y0) < 20) {
+    const eyeH = (x1 - x0) * 0.45;
+    const cy = (y0 + y1) / 2;
+    y0 = cy - eyeH / 2;
+    y1 = cy + eyeH / 2;
+  }
+
+  const w = x1 - x0;
+  const h = y1 - y0;
+
+  const px = w * spec.padX;
+  const py = h * spec.padY;
+
+  return {
+    x: x0 - px,
+    y: y0 - py,
+    w: w + px * 2,
+    h: h + py * 2,
+  };
+}
+
+/* ------------------------------------------------------------------
+   Render
+-------------------------------------------------------------------*/
+function drawFrame() {
+  const cw = canvas.width, ch = canvas.height;
+  ctx.drawImage(video, 0, 0, cw, ch);
+
+  const key = `${state.character}:${state.region}`;
+  const bmp = state.bitmaps.get(key);
+  if (!bmp || !state.lastLandmarks) return;
+
+  const box = getOverlayBox(state.lastLandmarks);
+  if (!box) return;
+
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(bmp, box.x, box.y, box.w, box.h);
+}
+
+let rvfcHandle = null;
+function startRenderLoop() {
+  if (state.renderRunning) return;
+  state.renderRunning = true;
+
+  if ("requestVideoFrameCallback" in HTMLVideoElement.prototype) {
+    const cb = () => {
+      if (!state.running) { state.renderRunning = false; return; }
+      drawFrame();
+      rvfcHandle = video.requestVideoFrameCallback(cb);
+    };
+    rvfcHandle = video.requestVideoFrameCallback(cb);
+  } else {
+    const cb = () => {
+      if (!state.running) { state.renderRunning = false; return; }
+      drawFrame();
+      requestAnimationFrame(cb);
+    };
+    requestAnimationFrame(cb);
+  }
+}
+
+/* ------------------------------------------------------------------
+   Detection loop — decoupled from render
+-------------------------------------------------------------------*/
+function detectionLoop() {
+  if (!state.running) return;
+  const now = performance.now();
+  if (now - state.lastDetectTs >= state.detectIntervalMs) {
+    state.lastDetectTs = now;
+    try {
+      const result = state.faceLandmarker.detectForVideo(video, now);
+      const lm = result?.faceLandmarks?.[0];
+      state.lastLandmarks = lm || null;
+    } catch (e) {
+      // Non-fatal; keep rendering last known landmarks
+    }
+  }
+  requestAnimationFrame(detectionLoop);
+}
+
+/* ------------------------------------------------------------------
+   HUD
+-------------------------------------------------------------------*/
+function updateHud() {
+  hudRight.textContent = `${state.character.toUpperCase()} · ${state.region.toUpperCase()}`;
+  hudLeft.textContent = state.recording
+    ? `REC ${formatDuration(Date.now() - state.recStart)}`
+    : "CAM_01 · LIVE";
+}
+function formatDuration(ms) {
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  const ss = String(s % 60).padStart(2, "0");
+  return `${m}:${ss}`;
+}
+
+/* ------------------------------------------------------------------
+   Start
+-------------------------------------------------------------------*/
+async function start() {
+  startBtn.disabled = true;
+  startBtn.textContent = "Loading…";
+  clearError();
+  idleMsg.textContent = "Loading face model…";
+
+  try {
+    await initModel();
+    idleMsg.textContent = "Requesting camera…";
+    await initCamera();
+
+    await preloadCurrent();
+    preloadAll();
+
+    state.running = true;
+    idleOverlay.style.display = "none";
+    captureBtn.disabled = false;
+    recBtn.disabled = false;
+    startRenderLoop();
+    detectionLoop();
+    updateHud();
+  } catch (e) {
+    console.error(e);
+    const msg = (() => {
+      if (e?.name === "NotAllowedError")   return "Camera permission denied. Allow access and retry.";
+      if (e?.name === "NotReadableError")  return "Camera busy in another app. Close it and retry.";
+      if (e?.name === "NotFoundError")     return "No camera found on this device.";
+      if (e?.message?.includes("Asset"))   return e.message + " — check ./assets/ files.";
+      if (e?.message?.includes("https"))   return e.message;
+      return "Startup failed: " + (e?.message || e);
+    })();
+    showError(msg);
+  }
+}
+
+/* ------------------------------------------------------------------
+   Capture / Record
+-------------------------------------------------------------------*/
+captureBtn.addEventListener("click", () => {
+  if (!state.running) return;
+  const url = canvas.toDataURL("image/png");
+  downloadLink.href = url;
+  downloadLink.download = `covercam_${Date.now()}.png`;
+  downloadLink.click();
+});
+
+recBtn.addEventListener("click", () => {
+  if (!state.running) return;
+  if (!state.recording) startRecording();
+  else stopRecording();
+});
+
+function startRecording() {
+  try {
+    const stream = canvas.captureStream(24);
+    const mime = MediaRecorder.isTypeSupported("video/webm;codecs=vp9")
+      ? "video/webm;codecs=vp9"
+      : MediaRecorder.isTypeSupported("video/webm;codecs=vp8")
+      ? "video/webm;codecs=vp8"
+      : "video/webm";
+    const recorder = new MediaRecorder(stream, { mimeType: mime });
+    state.recChunks = [];
+    recorder.ondataavailable = e => { if (e.data.size) state.recChunks.push(e.data); };
+    recorder.onstop = () => {
+      const blob = new Blob(state.recChunks, { type: mime });
+      const url = URL.createObjectURL(blob);
+      downloadLink.href = url;
+      downloadLink.download = `covercam_${Date.now()}.webm`;
+      downloadLink.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      stream.getTracks().forEach(t => t.stop());
+    };
+    recorder.start();
+    state.recorder = recorder;
+    state.recording = true;
+    state.recStart = Date.now();
+    recBtn.classList.add("recording");
+    statusbar.classList.add("is-recording");
+    state.recTimer = setInterval(updateHud, 500);
+    updateHud();
+  } catch (e) {
+    console.warn("Recording unavailable:", e);
+    showError("Recording not supported on this browser.");
+  }
+}
+function stopRecording() {
+  if (!state.recorder) return;
+  state.recorder.stop();
+  state.recorder = null;
+  state.recording = false;
+  recBtn.classList.remove("recording");
+  statusbar.classList.remove("is-recording");
+  clearInterval(state.recTimer);
+  updateHud();
+}
+
+/* ------------------------------------------------------------------
+   Character / region selection
+-------------------------------------------------------------------*/
+function setCharacter(name) {
+  state.character = name;
+  charSelect.value = name;
+  document.querySelectorAll("#charPanel button").forEach(b =>
+    b.classList.toggle("active", b.dataset.char === name));
+  preloadCurrent();
+  updateHud();
+}
+function setRegion(region) {
+  state.region = region;
+  regionSel.value = region;
+  document.querySelectorAll("#regionPanel button").forEach(b =>
+    b.classList.toggle("active", b.dataset.region === region));
+  preloadCurrent();
+  updateHud();
+}
+
+charSelect.addEventListener("change", () => setCharacter(charSelect.value));
+regionSel.addEventListener("change",  () => setRegion(regionSel.value));
+
+fabChar.addEventListener("click", e => {
+  e.stopPropagation();
+  regionPanel.classList.remove("open");
+  fabRegion.classList.remove("active");
+  charPanel.classList.toggle("open");
+  fabChar.classList.toggle("active", charPanel.classList.contains("open"));
+});
+fabRegion.addEventListener("click", e => {
+  e.stopPropagation();
+  charPanel.classList.remove("open");
+  fabChar.classList.remove("active");
+  regionPanel.classList.toggle("open");
+  fabRegion.classList.toggle("active", regionPanel.classList.contains("open"));
+});
+document.addEventListener("click", () => {
+  charPanel.classList.remove("open");
+  regionPanel.classList.remove("open");
+  fabChar.classList.remove("active");
+  fabRegion.classList.remove("active");
+});
+charPanel.addEventListener("click", e => {
+  const b = e.target.closest("button[data-char]");
+  if (!b) return;
+  setCharacter(b.dataset.char);
+  charPanel.classList.remove("open");
+  fabChar.classList.remove("active");
+});
+regionPanel.addEventListener("click", e => {
+  const b = e.target.closest("button[data-region]");
+  if (!b) return;
+  setRegion(b.dataset.region);
+  regionPanel.classList.remove("open");
+  fabRegion.classList.remove("active");
+});
+
+/* ------------------------------------------------------------------
+   Lifecycle
+-------------------------------------------------------------------*/
+startBtn.addEventListener("click", start);
+
+window.addEventListener("pagehide", () => {
+  state.running = false;
+  if (state.stream) state.stream.getTracks().forEach(t => t.stop());
+  if (state.recorder) try { state.recorder.stop(); } catch {}
+  if (state.faceLandmarker?.close) try { state.faceLandmarker.close(); } catch {}
+});
+
+window.addEventListener("resize", () => {
+  // Canvas backing stays at video resolution; CSS handles display.
+  // No action needed beyond what CSS already does.
+});
+</script>
+</body>
+</html>
